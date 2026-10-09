@@ -7,16 +7,18 @@ service=${2:-${SERVICE_NAME}}
 port=${3:-${PORT_NUMBER}}
 
 path=$(dirname "$0")
+environment=$(mktemp)
+cp "$variant/postman/environment.json" "$environment"
 
 timed() {
   end=$(date +%s)
-  dt=$(("$end" - $1))
-  dd=$(("$dt" / 86400))
-  dt2=$(("$dt" - 86400 * "$dd"))
-  dh=$(("$dt2" / 3600))
-  dt3=$(("$dt2" - 3600 * "$dh"))
-  dm=$(("$dt3" / 60))
-  ds=$(("$dt3" - 60 * "$dm"))
+  dt=$((end - $1))
+  dd=$((dt / 86400))
+  dt2=$((dt - 86400 * dd))
+  dh=$((dt2 / 3600))
+  dt3=$((dt2 - 3600 * dh))
+  dm=$((dt3 / 60))
+  ds=$((dt3 - 60 * dm))
 
   LC_NUMERIC=C printf "\nTotal runtime: %02d min %02d seconds\n" "$dm" "$ds"
 }
@@ -25,8 +27,8 @@ success() {
   newman run \
     --delay-request=100 \
     --folder=success \
-    --export-environment "$variant"/postman/environment.json \
-    --environment "$variant"/postman/environment.json \
+    --export-environment "$environment" \
+    --environment "$environment" \
     "$variant"/postman/collection.json
 }
 
@@ -44,15 +46,15 @@ step() {
   newman run \
     --delay-request=100 \
     --folder=step"$step" \
-    --export-environment "$variant"/postman/environment.json \
-    --environment "$variant"/postman/environment.json \
+    --export-environment "$environment" \
+    --environment "$environment" \
     "$variant"/postman/collection.json
 
   printf "=== Step %d completed ===\n" "$step"
 }
 
 start=$(date +%s)
-trap 'timed $start' EXIT
+trap 'rm -f "$environment"; timed $start' EXIT
 
 printf "=== Start test scenario ===\n"
 
