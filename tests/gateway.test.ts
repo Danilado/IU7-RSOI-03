@@ -180,7 +180,7 @@ test("return responds 204 during outage and finishes stock then rating after rec
 });
 
 test("upstream timeout returns 503; all rating reads use the circuit and recover", async () => {
-  // Successful read resets statistics left by preceding requests.
+  // Verify Rating is available before testing failures.
   assert.equal((await request("rating")).status, 200);
   ratingCalls = 0;
   ratingHangs = true;

@@ -5,51 +5,93 @@ export class ServiceUnavailable extends Error {
   }
 }
 
+class FailureRingBuffer {
+  private readonly timestamps: Float64Array;
+  private head = 0;
+  private size = 0;
+
+  constructor(capacity: number, private readonly windowMs: number) {
+    if (!Number.isInteger(capacity) || capacity < 1) {
+      throw new RangeError("Circuit breaker threshold must be a positive integer");
+    }
+    if (!Number.isFinite(windowMs) || windowMs <= 0) {
+      throw new RangeError("Circuit breaker window must be positive and finite");
+    }
+    this.timestamps = new Float64Array(capacity);
+  }
+
+  prune(now: number): void {
+    const cutoff = now - this.windowMs;
+    // The window is (now - windowMs, now]; exactly windowMs-old failures expire.
+    while (this.size > 0 && this.timestamps[this.head] <= cutoff) {
+      this.head = (this.head + 1) % this.timestamps.length;
+      this.size--;
+    }
+  }
+
+  record(now: number): boolean {
+    this.prune(now);
+    const tail = (this.head + this.size) % this.timestamps.length;
+    this.timestamps[tail] = now;
+    if (this.size === this.timestamps.length) {
+      this.head = (this.head + 1) % this.timestamps.length;
+    } else {
+      this.size++;
+    }
+    return this.size === this.timestamps.length;
+  }
+
+  clear(): void {
+    this.head = 0;
+    this.size = 0;
+  }
+}
+
 export class CircuitBreaker {
-  private buf: boolean[] = [];
-  private index = 0;
-  //  private failures = 0;
+  private readonly history: FailureRingBuffer;
   private openedAt: number | undefined;
   private probing = false;
+  private generation = 0;
   constructor(
-    private readonly threshold = 3,
+    threshold = 3,
     private readonly resetMs = 3000,
     private readonly now = Date.now,
+    windowMs = 60_000,
   ) {
-    for (let i = 0; i < threshold; ++i) this.buf.push(false);
+    this.history = new FailureRingBuffer(threshold, windowMs);
   }
 
   async execute<T>(operation: () => Promise<T>, unavailable: () => Error): Promise<T> {
-    if (this.openedAt !== undefined && (this.now() - this.openedAt < this.resetMs || this.probing)) {
+    const startedAt = this.now();
+    this.history.prune(startedAt);
+    if (this.openedAt !== undefined && (startedAt - this.openedAt < this.resetMs || this.probing)) {
       throw unavailable();
     }
     const probe = this.openedAt !== undefined;
+    const generation = this.generation;
     if (probe) this.probing = true;
+    const recovered = () => {
+      // Ordinary successes preserve failures. A successful probe starts a new cycle.
+      if (probe && generation === this.generation) {
+        this.history.clear();
+        this.openedAt = undefined;
+        this.generation++;
+      }
+    };
     try {
       const result = await operation();
-      this.buf[this.index] = false;
-      this.index++;
-      this.index %= this.threshold;
-
-      this.openedAt = undefined;
+      recovered();
       return result;
     } catch (error) {
       // A business 4xx response proves that the service is available.
       if (!(error instanceof ServiceUnavailable)) {
-        this.buf[this.index] = false;
-        this.index++;
-        this.index %= this.threshold;
-
-        this.openedAt = undefined;
-      } else {
-        this.buf[this.index] = true;
-        this.index++;
-        this.index %= this.threshold;
-
-        if (probe || this.buf.every(Boolean)) {
-          {
-            this.openedAt = this.now();
-          }
+        recovered();
+      } else if (generation === this.generation) {
+        const failedAt = this.now();
+        const thresholdReached = this.history.record(failedAt);
+        if (probe || thresholdReached) {
+          this.openedAt = failedAt;
+          this.generation++;
         }
       }
       throw error;

@@ -112,6 +112,8 @@ async function call<T>(url: string, options: RequestInit = {}): Promise<T> {
     breaker = new CircuitBreaker(
       Number(process.env.CB_FAILURE_THRESHOLD) || 3,
       Number(process.env.CB_RESET_MS) || 3000,
+      Date.now,
+      Number(process.env.CB_WINDOW_MS) || 60_000,
     );
     breakers.set(service, breaker);
   }

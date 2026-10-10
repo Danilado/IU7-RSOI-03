@@ -67,6 +67,7 @@ services:
       REQUEST_TIMEOUT_MS: 2000
       CB_FAILURE_THRESHOLD: 3
       CB_RESET_MS: 3000
+      CB_WINDOW_MS: 60000
       RETRY_INTERVAL_MS: 10000
     depends_on:
       library-service: { condition: service_healthy }
